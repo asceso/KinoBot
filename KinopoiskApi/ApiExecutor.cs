@@ -10,6 +10,19 @@ namespace KinopoiskApi
     /// </summary>
     public class ApiExecutor
     {
+        public static string GetFullPosterUrl(string url)
+        {
+            RestClient client = new(url);
+            RestRequest request = new();
+            request.Method = Method.Head;
+            RestResponse response = client.Execute(request);
+            if (response.ResponseUri == null)
+            {
+                return url;
+            }
+            return response.ResponseUri.ToString();
+        }
+
         /// <summary>
         /// Метод создает ссылку SS из кинопоиск ИД
         /// </summary>
@@ -74,6 +87,37 @@ namespace KinopoiskApi
                 {
                     JObject jsonData = JObject.Parse(response.Content);
                     foreach (JToken filmJson in jsonData["items"].ToArray())
+                    {
+                        FilmModel model = JsonConvert.DeserializeObject<FilmModel>(filmJson.ToString());
+                        films.Add(model);
+                    }
+                    return films;
+                }
+                catch (Exception)
+                {
+                    return new();
+                }
+            }
+            else
+            {
+                return null;
+            }
+        }
+
+        public static List<FilmModel> GetTop100Films(string apiToken)
+        {
+            RestClient client = new("https://kinopoiskapiunofficial.tech/api/v2.2/films/top?type=TOP_100_POPULAR_FILMS");
+            RestRequest request = new();
+            request.Method = Method.Get;
+            request.AddHeader("X-API-KEY", apiToken);
+            RestResponse response = client.Execute(request);
+            List<FilmModel> films = new();
+            if (response.StatusCode == System.Net.HttpStatusCode.OK)
+            {
+                try
+                {
+                    JObject jsonData = JObject.Parse(response.Content);
+                    foreach (JToken filmJson in jsonData["films"].ToArray())
                     {
                         FilmModel model = JsonConvert.DeserializeObject<FilmModel>(filmJson.ToString());
                         films.Add(model);

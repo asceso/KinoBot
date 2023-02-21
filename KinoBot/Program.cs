@@ -8,19 +8,85 @@ using Telegram.Bot.Polling;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.InputFiles;
 using Telegram.Bot.Types.ReplyMarkups;
+using CronSTD;
+using DatabaseAdapter.Controllers;
+using Models.Database;
 
 namespace KinoBot
 {
     internal class Program
     {
+        private static readonly CronDaemon cronDaemon = new();
+        private static ConfigModel config;
+        private static TelegramBotClient botClient;
+
         private static void Main()
         {
-            ConfigModel config = ConfigManager.ReadConfig();
-            TelegramBotClient botClient = new(config.TelegramBotToken);
+            config = ConfigManager.ReadConfig();
+            botClient = new(config.TelegramBotToken);
             Handler handler = new(config);
             botClient.StartReceiving(handler);
+            if (config.RunCronAtStartup)
+            {
+                Task.Run(async () => await OnChronExecute());
+            }
+            cronDaemon.AddJob(config.ScheduleNotificationsCron, async () => await OnChronExecute());
+            cronDaemon.Start();
             Console.WriteLine("Бот запущен, нажмите Enter для выхода");
             Console.ReadLine();
+            cronDaemon.Stop();
+        }
+
+        private static async Task OnChronExecute()
+        {
+            List<UserModel> targetUsers = (await UsersController.GetUsersAsync()).Where(u => u.IsSubscribedForNotifications).ToList();
+            if (!targetUsers.Any())
+            {
+                Console.WriteLine($"Попытка рассылки в {DateTime.Now:dd.MM.yy HH:mm:ss}, нет подходящих пользователей");
+                return;
+            }
+
+            List<FilmModel> foundedFilms = ApiExecutor.GetTop100Films(config.ApiKinopoiskToken);
+            List<FilmModel> firstFilms = foundedFilms.GetFirstElements(5);
+            if (!firstFilms.Any())
+            {
+                Console.WriteLine($"Попытка рассылки в {DateTime.Now:dd.MM.yy HH:mm:ss}, не найдены фильмы, возможно не отвечает API");
+                return;
+            }
+
+            List<IAlbumInputMedia> photos = new();
+            List<List<InlineKeyboardButton>> markupButtons = new();
+            List<InlineKeyboardButton> rowForMarkup = new();
+            foreach (var film in firstFilms)
+            {
+                string filmUrl = ApiExecutor.CreateSSLinkForFilm(film.FilmId.ToString());
+                photos.Add(new InputMediaPhoto(new InputMedia(ApiExecutor.GetFullPosterUrl(film.PosterUrl)))
+                {
+                    Caption = film.GetPreferName() + "\n" + filmUrl,
+                    ParseMode = Telegram.Bot.Types.Enums.ParseMode.Html
+                });
+                rowForMarkup.Add(new InlineKeyboardButton(film.GetPreferName())
+                {
+                    Url = filmUrl
+                });
+                markupButtons.Add(new List<InlineKeyboardButton>(rowForMarkup));
+                rowForMarkup.Clear();
+            }
+            InlineKeyboardMarkup lookUpMarkup = new(markupButtons);
+
+            foreach (UserModel user in targetUsers)
+            {
+                try
+                {
+                    await botClient.SendMediaGroupAsync(user.Id, photos);
+                    await botClient.SendTextMessageAsync(user.Id, "Еженедельная подборка топовых фильмов.\r\nЧтобы отписаться от рассылки отправь команду /unsubscribe", replyMarkup: lookUpMarkup);
+                }
+                catch (Exception)
+                {
+                    continue;
+                }
+            }
+            Console.WriteLine($"Рассылка выполнена в {DateTime.Now:dd.MM.yy HH:mm:ss}, для {targetUsers.Count} пользователей");
         }
     }
 
@@ -71,8 +137,10 @@ namespace KinoBot
             {
                 mainKeyboardRows.Add(nextRowButtons);
             }
-            mainKeyboard = new(mainKeyboardRows);
-            mainKeyboard.ResizeKeyboard = true;
+            mainKeyboard = new(mainKeyboardRows)
+            {
+                ResizeKeyboard = true
+            };
         }
 
         /// <summary>
@@ -85,8 +153,29 @@ namespace KinoBot
         public async Task HandleUpdateAsync(ITelegramBotClient bot, Update update, CancellationToken cancellationToken)
         {
             TempTelegramData temp = new(update);
-            temp.Operation = operations.FirstOrDefault(o => o.UserId == temp.Uid);
+            //проверяем есть ли пользователь в БД
+            UserModel dbUser = await UsersController.GetUserByIdAsync(temp.Uid);
+            if (dbUser == null)
+            {
+                //постим нового юзера если не существует
+                UserModel postUser = new()
+                {
+                    Id = temp.Uid,
+                    Username = temp.Username,
+                    Firstname = temp.Firstname,
+                    Lastname = temp.Lastname,
+                    RegistrationDate = DateTime.Now,
+                    IsSubscribedForNotifications = true
+                };
+                await UsersController.PostUserAsync(postUser);
+                dbUser = await UsersController.GetUserByIdAsync(temp.Uid);
+            }
 
+            if (dbUser == null)
+            {
+                return;
+            }
+            temp.Operation = operations.FirstOrDefault(o => o.UserId == temp.Uid);
             try
             {
                 //Смотрим есть ли у пользователя операция
@@ -140,6 +229,32 @@ namespace KinoBot
                     {
                         operations.Add(new(temp.Uid, Operation.OperationType.WaitKeywordForSearch));
                         await bot.SendTextMessageAsync(temp.Uid, "Введите ключевую фразу для поиска, или нажмите отмену", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
+                        return;
+                    }
+
+                    //обработка отказа от рассылки
+                    if (temp.Message == "/unsubscribe")
+                    {
+                        dbUser.IsSubscribedForNotifications = false;
+                        await UsersController.PutUserAsync(dbUser);
+                        await bot.SendTextMessageAsync(
+                            temp.Uid,
+                            "Вы успешно отписались от рассылки, если хотите снова видеть крутые новинки отправьте боту команду /subscribe",
+                            cancellationToken: cancellationToken
+                            );
+                        return;
+                    }
+
+                    //обработка подписания на рассылку
+                    if (temp.Message == "/subscribe")
+                    {
+                        dbUser.IsSubscribedForNotifications = true;
+                        await UsersController.PutUserAsync(dbUser);
+                        await bot.SendTextMessageAsync(
+                            temp.Uid,
+                            "Вы успешно подписались на рассылку крутых новинок, чтобы отписаться от рассылки отправьте боту команду /unsubscribe",
+                            cancellationToken: cancellationToken
+                            );
                         return;
                     }
 

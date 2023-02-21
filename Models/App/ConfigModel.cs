@@ -16,6 +16,16 @@
         public string ApiKinopoiskToken { get; set; }
 
         /// <summary>
+        /// Расписание для рассылки, https://crontab.guru/
+        /// </summary>
+        public string ScheduleNotificationsCron { get; set; }
+
+        /// <summary>
+        /// Запустить рассылку при старте
+        /// </summary>
+        public bool RunCronAtStartup { get; set; }
+
+        /// <summary>
         /// Включенные кнопки жанров
         /// </summary>
         public List<GenreConfig> EnabledGenres { get; set; }
