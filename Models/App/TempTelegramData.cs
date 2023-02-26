@@ -44,7 +44,7 @@ namespace Models.App
                 Uid = update.CallbackQuery.From.Id;
                 MessageId = update.CallbackQuery.Message.MessageId;
                 Callback = update.CallbackQuery.Data;
-                Language = update.Message.From.LanguageCode;
+                Language = update.CallbackQuery.From.LanguageCode;
             }
         }
     }

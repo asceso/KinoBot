@@ -24,11 +24,11 @@ namespace Services
         /// <param name="source">список - источник</param>
         /// <param name="count">кол-во элементов для отрезания</param>
         /// <returns>первые N элементов из списка</returns>
-        public static List<FilmModel> GetFirstElements(this List<FilmModel> source, int count)
+        public static List<TData> GetFirstElements<TData>(this List<TData> source, int count)
         {
-            List<FilmModel> result = new();
+            List<TData> result = new();
             int counter = 0;
-            foreach (FilmModel model in source)
+            foreach (TData model in source)
             {
                 result.Add(model);
                 counter++;

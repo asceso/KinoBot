@@ -43,6 +43,9 @@ namespace Models.KinopoiskApi
         [JsonProperty("ratingImdb")]
         public string RatingImdb { get; set; }
 
+        [JsonProperty("rating")]
+        public string Rating { get; set; }
+
         [JsonProperty("ratingVoteCount")]
         public int RatingVoteCount { get; set; }
 
@@ -51,6 +54,9 @@ namespace Models.KinopoiskApi
 
         [JsonProperty("posterUrlPreview")]
         public string PosterUrlPreview { get; set; }
+
+        [JsonProperty("general")]
+        public bool General { get; set; }
 
         public string GetPreferName()
         {

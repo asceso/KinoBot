@@ -11,6 +11,8 @@ using Telegram.Bot.Types.ReplyMarkups;
 using CronSTD;
 using DatabaseAdapter.Controllers;
 using Models.Database;
+using static Models.Enums.Operation;
+using Telegram.Bot.Types.Enums;
 
 namespace KinoBot
 {
@@ -25,7 +27,16 @@ namespace KinoBot
             config = ConfigManager.ReadConfig();
             botClient = new(config.TelegramBotToken);
             Handler handler = new(config);
-            botClient.StartReceiving(handler);
+            botClient.StartReceiving(
+                handler,
+                receiverOptions: new ReceiverOptions()
+                {
+                    AllowedUpdates = new UpdateType[]
+                    {
+                        UpdateType.Message,
+                        UpdateType.CallbackQuery
+                    }
+                });
             if (config.RunCronAtStartup)
             {
                 Task.Run(async () => await OnChronExecute());
@@ -63,7 +74,7 @@ namespace KinoBot
                 photos.Add(new InputMediaPhoto(new InputMedia(ApiExecutor.GetFullPosterUrl(film.PosterUrl)))
                 {
                     Caption = film.GetPreferName() + "\n" + filmUrl,
-                    ParseMode = Telegram.Bot.Types.Enums.ParseMode.Html
+                    ParseMode = ParseMode.Html
                 });
                 rowForMarkup.Add(new InlineKeyboardButton(film.GetPreferName())
                 {
@@ -115,8 +126,8 @@ namespace KinoBot
             List<List<KeyboardButton>> mainKeyboardRows = new();
             List<KeyboardButton> firstRowMainKeyboard = new()
             {
-                //new KeyboardButton("ТОП недели ⚡️"),
-                new KeyboardButton("Найти 🔍")
+                new KeyboardButton("Найти по фразе 🔍"),
+                new KeyboardButton("Найти по актеру 🔍")
             };
             mainKeyboardRows.Add(firstRowMainKeyboard);
             int inRowCounter = 0;
@@ -175,6 +186,43 @@ namespace KinoBot
             {
                 return;
             }
+
+            if (!string.IsNullOrEmpty(temp.Callback))
+            {
+                try
+                {
+                    string[] callbackParams = temp.Callback.Split('|');
+                    CallbackType callbackType = (CallbackType)int.Parse(callbackParams[0]);
+
+                    if (callbackType == CallbackType.SearchByActor)
+                    {
+                        string actorId = callbackParams[1];
+                        List<FilmModel> foundedFilms = ApiExecutor.GetFilmsByActor(config.ApiKinopoiskToken, actorId);
+                        List<FilmModel> firstFilms = foundedFilms.Where(f => f.General).DistinctBy(f => f.FilmId).ToList().GetFirstElements(5);
+
+                        if (!firstFilms.Any())
+                        {
+                            await bot.SendTextMessageAsync(temp.Uid, "Не удалоось найти фильмы по актеру, повторите попытку снова или позднее!", cancellationToken: cancellationToken);
+                            return;
+                        }
+
+                        string mainMessage = "Список самых популярных фильмов где выбранный актер в главных ролях:\r\n";
+                        foreach (FilmModel film in firstFilms)
+                        {
+                            mainMessage += $"[{film.GetPreferName()}]({ApiExecutor.CreateSSLinkForFilm(film.FilmId.ToString())})\r\n";
+                        }
+                        mainMessage = mainMessage.Replace("-", "\\-");
+                        await bot.SendTextMessageAsync(temp.Uid, mainMessage, parseMode: ParseMode.MarkdownV2);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(ex.Message);
+                    return;
+                }
+                return;
+            }
+
             temp.Operation = operations.FirstOrDefault(o => o.UserId == temp.Uid);
             try
             {
@@ -189,8 +237,45 @@ namespace KinoBot
                         return;
                     }
 
+                    //проверяем ввод имени актера
+                    if (temp.Operation.OperationType == OperationType.WaitActorInfoForSearch)
+                    {
+                        List<ActorModel> foundedActors = ApiExecutor.FindPersons(temp.Message, config.ApiKinopoiskToken);
+                        List<ActorModel> firstActors = foundedActors.GetFirstElements(5);
+
+                        await bot.SendTextMessageAsync(temp.Uid, "Высылаю первые 5 результатов!", replyMarkup: mainKeyboard, cancellationToken: cancellationToken);
+                        foreach (ActorModel actor in firstActors)
+                        {
+                            List<List<InlineKeyboardButton>> markups = new();
+                            markups.Add(new List<InlineKeyboardButton>()
+                            {
+                                new InlineKeyboardButton("Профиль на кинопоиске 👤")
+                                {
+                                    Url = actor.WebUrl
+                                }
+                            });
+                            markups.Add(new List<InlineKeyboardButton>()
+                            {
+                                new InlineKeyboardButton("Искать фильмы с актером 🎬")
+                                {
+                                    CallbackData = $"{(int)CallbackType.SearchByActor}|{actor.KinopoiskId}"
+                                }
+                            });
+                            InlineKeyboardMarkup lookUpMarkup = new(markups);
+
+                            await bot.SendPhotoAsync(
+                                temp.Uid,
+                                new InputOnlineFile(ApiExecutor.GetFullPosterUrl(actor.PosterUrl)),
+                                actor.GetPreferName(),
+                                replyMarkup: lookUpMarkup,
+                                cancellationToken: cancellationToken);
+                        }
+                        operations.Remove(temp.Operation);
+                        return;
+                    }
+
                     //проверяем ввод ключевого слова
-                    if (temp.Operation.OperationType == Operation.OperationType.WaitKeywordForSearch)
+                    if (temp.Operation.OperationType == OperationType.WaitKeywordForSearch)
                     {
                         List<FilmModel> foundedFilms = ApiExecutor.GetFilmsByKeyword(temp.Message, config.ApiKinopoiskToken);
                         List<FilmModel> firstFilms = foundedFilms.GetFirstElements(5);
@@ -205,7 +290,7 @@ namespace KinoBot
 
                             await bot.SendPhotoAsync(
                                 temp.Uid,
-                                new InputOnlineFile(film.PosterUrl),
+                                new InputOnlineFile(ApiExecutor.GetFullPosterUrl(film.PosterUrl)),
                                 film.GetPostCaption(),
                                 replyMarkup: lookUpMarkup,
                                 cancellationToken: cancellationToken);
@@ -224,11 +309,18 @@ namespace KinoBot
                         return;
                     }
 
-                    //обработка сообщения найти
-                    if (temp.Message == "Найти 🔍")
+                    //обработка сообщения найти по фразе
+                    if (temp.Message == "Найти по фразе 🔍")
                     {
                         operations.Add(new(temp.Uid, Operation.OperationType.WaitKeywordForSearch));
                         await bot.SendTextMessageAsync(temp.Uid, "Введите ключевую фразу для поиска, или нажмите отмену", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
+                        return;
+                    }
+                    //обработка сообщения найти по актеру
+                    if (temp.Message == "Найти по актеру 🔍")
+                    {
+                        operations.Add(new(temp.Uid, Operation.OperationType.WaitActorInfoForSearch));
+                        await bot.SendTextMessageAsync(temp.Uid, "Введите имя или фамилию актера для поиска, или нажмите отмену", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
                         return;
                     }
 

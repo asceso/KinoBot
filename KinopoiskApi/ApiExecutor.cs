@@ -134,5 +134,67 @@ namespace KinopoiskApi
                 return null;
             }
         }
+
+        public static List<FilmModel> GetFilmsByActor(string apiToken, string actorId)
+        {
+            RestClient client = new("https://kinopoiskapiunofficial.tech/api/v1/staff/" + actorId);
+            RestRequest request = new();
+            request.Method = Method.Get;
+            request.AddHeader("X-API-KEY", apiToken);
+            RestResponse response = client.Execute(request);
+            List<FilmModel> films = new();
+            if (response.StatusCode == System.Net.HttpStatusCode.OK)
+            {
+                try
+                {
+                    JObject jsonData = JObject.Parse(response.Content);
+                    foreach (JToken filmJson in jsonData["films"].ToArray())
+                    {
+                        FilmModel model = JsonConvert.DeserializeObject<FilmModel>(filmJson.ToString());
+                        films.Add(model);
+                    }
+                    return films;
+                }
+                catch (Exception)
+                {
+                    return new();
+                }
+            }
+            else
+            {
+                return null;
+            }
+        }
+
+        public static List<ActorModel> FindPersons(string name, string apiToken)
+        {
+            RestClient client = new("https://kinopoiskapiunofficial.tech/api/v1/persons?name=" + name);
+            RestRequest request = new();
+            request.Method = Method.Get;
+            request.AddHeader("X-API-KEY", apiToken);
+            RestResponse response = client.Execute(request);
+            List<ActorModel> persons = new();
+            if (response.StatusCode == System.Net.HttpStatusCode.OK)
+            {
+                try
+                {
+                    JObject jsonData = JObject.Parse(response.Content);
+                    foreach (JToken actorJson in jsonData["items"].ToArray())
+                    {
+                        ActorModel model = JsonConvert.DeserializeObject<ActorModel>(actorJson.ToString());
+                        persons.Add(model);
+                    }
+                    return persons;
+                }
+                catch (Exception)
+                {
+                    return new();
+                }
+            }
+            else
+            {
+                return null;
+            }
+        }
     }
 }
