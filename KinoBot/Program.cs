@@ -13,6 +13,8 @@ using DatabaseAdapter.Controllers;
 using Models.Database;
 using static Models.Enums.Operation;
 using Telegram.Bot.Types.Enums;
+using System.Runtime.CompilerServices;
+using System.Threading;
 
 namespace KinoBot
 {
@@ -105,6 +107,7 @@ namespace KinoBot
     {
         private readonly ReplyKeyboardMarkup mainKeyboard;
         private readonly ReplyKeyboardMarkup cancelKeyboard;
+        private readonly ReplyKeyboardMarkup yearsKeyboard;
         private readonly ConfigModel config;
         private readonly List<GenreConfig> enabledGenres;
         private readonly List<OperationModel> operations;
@@ -121,6 +124,34 @@ namespace KinoBot
             {
                 ResizeKeyboard = true
             };
+            //Создаем клавиатуру с кнопками годов
+            List<List<KeyboardButton>> yearsKeyboardRows = new();
+            List<KeyboardButton> firstRowYearsKeyboard = new()
+            {
+                new KeyboardButton("80-е"),
+                new KeyboardButton("90-е")
+            };
+            yearsKeyboardRows.Add(firstRowYearsKeyboard);
+            List<KeyboardButton> secondRowYearsKeyboard = new()
+            {
+                new KeyboardButton(DateTime.Now.Year.ToString()),
+                new KeyboardButton(DateTime.Now.AddYears(-1).Year.ToString())
+            };
+            yearsKeyboardRows.Add(secondRowYearsKeyboard);
+            List<KeyboardButton> thirdRowYearsKeyboard = new()
+            {
+                new KeyboardButton("Я знаю точный год")
+            };
+            yearsKeyboardRows.Add(thirdRowYearsKeyboard);
+            List<KeyboardButton> cancelRowYearsKeyboard = new()
+            {
+                new KeyboardButton("Отмена 🚫")
+            };
+            yearsKeyboardRows.Add(cancelRowYearsKeyboard);
+            yearsKeyboard = new(yearsKeyboardRows)
+            {
+                ResizeKeyboard = true
+            };
 
             //Создаем клавиатуру с кнопками ТОП поиск и включенными из конфига
             List<List<KeyboardButton>> mainKeyboardRows = new();
@@ -130,6 +161,11 @@ namespace KinoBot
                 new KeyboardButton("Найти по актеру 🔍")
             };
             mainKeyboardRows.Add(firstRowMainKeyboard);
+            List<KeyboardButton> secondRowMainKeyboard = new()
+            {
+                new KeyboardButton("Найти по годам 🔍")
+            };
+            mainKeyboardRows.Add(secondRowMainKeyboard);
             int inRowCounter = 0;
             List<KeyboardButton> nextRowButtons = new();
             enabledGenres = config.EnabledGenres.Where(eg => eg.IsEnabled).ToList();
@@ -229,8 +265,10 @@ namespace KinoBot
                 //Смотрим есть ли у пользователя операция
                 if (temp.Operation != null)
                 {
+                    string userArgument = temp.Message;
+
                     //кнопка отмены
-                    if (temp.Message == "Отмена 🚫")
+                    if (userArgument == "Отмена 🚫")
                     {
                         operations.Remove(temp.Operation);
                         await bot.SendTextMessageAsync(temp.Uid, "Добро пожаловать в кино-бота, используйте клавиатуру для работы!", replyMarkup: mainKeyboard, cancellationToken: cancellationToken);
@@ -240,27 +278,29 @@ namespace KinoBot
                     //проверяем ввод имени актера
                     if (temp.Operation.OperationType == OperationType.WaitActorInfoForSearch)
                     {
-                        List<ActorModel> foundedActors = ApiExecutor.FindPersons(temp.Message, config.ApiKinopoiskToken);
+                        List<ActorModel> foundedActors = ApiExecutor.FindPersons(userArgument, config.ApiKinopoiskToken);
                         List<ActorModel> firstActors = foundedActors.GetFirstElements(5);
 
                         await bot.SendTextMessageAsync(temp.Uid, "Высылаю первые 5 результатов!", replyMarkup: mainKeyboard, cancellationToken: cancellationToken);
                         foreach (ActorModel actor in firstActors)
                         {
-                            List<List<InlineKeyboardButton>> markups = new();
-                            markups.Add(new List<InlineKeyboardButton>()
+                            List<List<InlineKeyboardButton>> markups = new()
                             {
-                                new InlineKeyboardButton("Профиль на кинопоиске 👤")
+                                new List<InlineKeyboardButton>()
                                 {
-                                    Url = actor.WebUrl
-                                }
-                            });
-                            markups.Add(new List<InlineKeyboardButton>()
-                            {
-                                new InlineKeyboardButton("Искать фильмы с актером 🎬")
+                                    new InlineKeyboardButton("Профиль на кинопоиске 👤")
+                                    {
+                                        Url = actor.WebUrl
+                                    }
+                                },
+                                new List<InlineKeyboardButton>()
                                 {
-                                    CallbackData = $"{(int)CallbackType.SearchByActor}|{actor.KinopoiskId}"
+                                    new InlineKeyboardButton("Искать фильмы с актером 🎬")
+                                    {
+                                        CallbackData = $"{(int)CallbackType.SearchByActor}|{actor.KinopoiskId}"
+                                    }
                                 }
-                            });
+                            };
                             InlineKeyboardMarkup lookUpMarkup = new(markups);
 
                             await bot.SendPhotoAsync(
@@ -277,7 +317,7 @@ namespace KinoBot
                     //проверяем ввод ключевого слова
                     if (temp.Operation.OperationType == OperationType.WaitKeywordForSearch)
                     {
-                        List<FilmModel> foundedFilms = ApiExecutor.GetFilmsByKeyword(temp.Message, config.ApiKinopoiskToken);
+                        List<FilmModel> foundedFilms = ApiExecutor.GetFilmsByKeyword(userArgument, config.ApiKinopoiskToken);
                         List<FilmModel> firstFilms = foundedFilms.GetFirstElements(5);
 
                         await bot.SendTextMessageAsync(temp.Uid, "Высылаю первые 5 результатов!", replyMarkup: mainKeyboard, cancellationToken: cancellationToken);
@@ -298,6 +338,59 @@ namespace KinoBot
                         operations.Remove(temp.Operation);
                         return;
                     }
+
+                    //проверяем ввод годов для поиска
+                    if (temp.Operation.OperationType == OperationType.WaitYearsForSearch)
+                    {
+                        string currentYear = DateTime.Now.Year.ToString();
+                        string previousYear = DateTime.Now.AddYears(-1).Year.ToString();
+
+                        if (userArgument == currentYear || userArgument == previousYear)
+                        {
+                            await ProcessYearsSearchForUserAsync(bot, temp.Uid, userArgument, userArgument, temp.Operation);
+                            return;
+                        }
+                        else
+                        {
+                            switch (userArgument)
+                            {
+                                case "80-е":
+                                    await ProcessYearsSearchForUserAsync(bot, temp.Uid, "1980", "1990", temp.Operation);
+                                    return;
+
+                                case "90-е":
+                                    await ProcessYearsSearchForUserAsync(bot, temp.Uid, "1990", "2000", temp.Operation);
+                                    return;
+
+                                case "Я знаю точный год":
+                                    operations.Remove(temp.Operation);
+                                    operations.Add(new(temp.Uid, OperationType.WaitAccuracyYearToSearch));
+                                    await bot.SendTextMessageAsync(
+                                        temp.Uid,
+                                        "Пожалуйста введите нужный год, или нажмите отмену",
+                                        replyMarkup: cancelKeyboard,
+                                        cancellationToken: cancellationToken
+                                        );
+                                    return;
+
+                                default:
+                                    await bot.SendTextMessageAsync(
+                                        temp.Uid,
+                                        "Пожалуйста выберите вариант из клавиатуры, или нажмите отмену",
+                                        replyMarkup: yearsKeyboard,
+                                        cancellationToken: cancellationToken
+                                        );
+                                    return;
+                            }
+                        }
+                    }
+
+                    //проверяем ввод точного года для поиска
+                    if (temp.Operation.OperationType == OperationType.WaitAccuracyYearToSearch)
+                    {
+                        await ProcessYearsSearchForUserAsync(bot, temp.Uid, userArgument, userArgument, temp.Operation);
+                        return;
+                    }
                 }
                 //Если нет проверяем сообщение
                 else
@@ -312,15 +405,22 @@ namespace KinoBot
                     //обработка сообщения найти по фразе
                     if (temp.Message == "Найти по фразе 🔍")
                     {
-                        operations.Add(new(temp.Uid, Operation.OperationType.WaitKeywordForSearch));
+                        operations.Add(new(temp.Uid, OperationType.WaitKeywordForSearch));
                         await bot.SendTextMessageAsync(temp.Uid, "Введите ключевую фразу для поиска, или нажмите отмену", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
                         return;
                     }
                     //обработка сообщения найти по актеру
                     if (temp.Message == "Найти по актеру 🔍")
                     {
-                        operations.Add(new(temp.Uid, Operation.OperationType.WaitActorInfoForSearch));
+                        operations.Add(new(temp.Uid, OperationType.WaitActorInfoForSearch));
                         await bot.SendTextMessageAsync(temp.Uid, "Введите имя или фамилию актера для поиска, или нажмите отмену", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
+                        return;
+                    }
+                    //обработка сообщения найти по годам
+                    if (temp.Message == "Найти по годам 🔍")
+                    {
+                        operations.Add(new(temp.Uid, OperationType.WaitYearsForSearch));
+                        await bot.SendTextMessageAsync(temp.Uid, "Выберите вариант из клавиатуры, или нажмите отмену", replyMarkup: yearsKeyboard, cancellationToken: cancellationToken);
                         return;
                     }
 
@@ -375,6 +475,29 @@ namespace KinoBot
             {
                 Console.WriteLine(ex.Message);
             }
+        }
+
+        private async Task ProcessYearsSearchForUserAsync(ITelegramBotClient bot, long userId, string yearFrom, string yearTo, OperationModel operation)
+        {
+            List<FilmModel> foundedFilms = ApiExecutor.GetFilmsByYears(yearFrom, yearTo, config.ApiKinopoiskToken);
+            List<FilmModel> firstFilms = foundedFilms.GetFirstElements(5);
+
+            await bot.SendTextMessageAsync(userId, "Высылаю первые 5 результатов!", replyMarkup: mainKeyboard);
+            foreach (FilmModel film in firstFilms)
+            {
+                InlineKeyboardMarkup lookUpMarkup = new(new InlineKeyboardButton("Смотреть 🥰")
+                {
+                    Url = ApiExecutor.CreateSSLinkForFilm(film.KinopoiskId.ToString()),
+                });
+
+                await bot.SendPhotoAsync(
+                    userId,
+                    new InputOnlineFile(ApiExecutor.GetFullPosterUrl(film.PosterUrl)),
+                    film.GetPostCaption(),
+                    replyMarkup: lookUpMarkup
+                    );
+            }
+            operations.Remove(operation);
         }
 
         /// <summary>

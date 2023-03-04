@@ -4,7 +4,7 @@
     {
         public enum OperationType
         {
-            WaitKeywordForSearch, WaitActorInfoForSearch
+            WaitKeywordForSearch, WaitActorInfoForSearch, WaitYearsForSearch, WaitAccuracyYearToSearch
         }
 
         public enum CallbackType

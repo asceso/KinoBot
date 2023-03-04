@@ -68,6 +68,44 @@ namespace KinopoiskApi
         }
 
         /// <summary>
+        /// Найти фильмы по жанру
+        /// </summary>
+        /// <param name="yearFrom">год начала</param>
+        /// <param name="yearTo">год конца</param>
+        /// <param name="apiToken">АПИ ключ</param>
+        /// <returns>Список фильмов</returns>
+        public static List<FilmModel> GetFilmsByYears(string yearFrom, string yearTo, string apiToken)
+        {
+            RestClient client = new($"https://kinopoiskapiunofficial.tech/api/v2.2/films?yearFrom={yearFrom}&yearTo={yearTo}");
+            RestRequest request = new();
+            request.Method = Method.Get;
+            request.AddHeader("X-API-KEY", apiToken);
+            RestResponse response = client.Execute(request);
+            List<FilmModel> films = new();
+            if (response.StatusCode == System.Net.HttpStatusCode.OK)
+            {
+                try
+                {
+                    JObject jsonData = JObject.Parse(response.Content);
+                    foreach (JToken filmJson in jsonData["items"].ToArray())
+                    {
+                        FilmModel model = JsonConvert.DeserializeObject<FilmModel>(filmJson.ToString());
+                        films.Add(model);
+                    }
+                    return films;
+                }
+                catch (Exception)
+                {
+                    return new();
+                }
+            }
+            else
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
         /// Найти фильмы по ключевому слову
         /// </summary>
         /// <param name="keyword">ключевое слово</param>
